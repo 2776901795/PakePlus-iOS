@@ -1,4 +1,5 @@
-
+// very important, if you don't know what it is, don't touch it
+// 非常重要，不懂代码不要动，这里可以解决80%的问题，也可以生产1000+的bug
 const hookClick = (e) => {
     const origin = e.target.closest('a')
     const isBaseTargetBlank = document.querySelector(
@@ -39,6 +40,12 @@ function initCustomFeatures() {
   
   // 3. 隐藏APP下载相关元素
   hideAppDownloadElements();
+  
+  // 4. 修改下载页面中的下载按钮行为
+  modifyDownloadButtons();
+  
+  // 5. 处理安全区域（导航栏）问题
+  handleSafeAreaInsets();
 }
 
 // 显示版本信息函数
@@ -87,16 +94,16 @@ function compareVersions(v1, v2) {
 
 // 从download.php中获取最新版本号
 function checkForUpdates() {
-  // 创建一个隐藏的iframe来加载download.php
-  const iframe = document.createElement('iframe');
-  iframe.style.display = 'none';
-  iframe.src = 'download.php';
-  
-  iframe.onload = function() {
-    try {
-      // 尝试从iframe中提取版本信息
-      const iframeDoc = iframe.contentDocument || iframe.contentWindow.document;
-      const versionElement = iframeDoc.querySelector('.app-version');
+  // 使用fetch替代iframe，更可靠
+  fetch('download.php')
+    .then(response => response.text())
+    .then(html => {
+      // 创建一个临时的DOM元素来解析HTML
+      const tempDiv = document.createElement('div');
+      tempDiv.innerHTML = html;
+      
+      // 提取版本信息
+      const versionElement = tempDiv.querySelector('.app-version');
       
       if (versionElement) {
         // 提取版本号 (例如从 "版本: 0.0.2" 中提取 "0.0.2")
@@ -111,21 +118,10 @@ function checkForUpdates() {
           showUpdateNotification(latestVersion);
         }
       }
-      
-      // 移除iframe
-      setTimeout(() => {
-        document.body.removeChild(iframe);
-      }, 100);
-      
-    } catch (e) {
-      console.error('获取版本信息失败:', e);
-      // 移除iframe
-      document.body.removeChild(iframe);
-    }
-  };
-  
-  // 添加iframe到body
-  document.body.appendChild(iframe);
+    })
+    .catch(error => {
+      console.error('获取版本信息失败:', error);
+    });
 }
 
 // 显示更新提示
@@ -206,13 +202,180 @@ function hideAppDownloadElements() {
   }, 100);
 }
 
+// 修改下载页面中的下载按钮行为
+function modifyDownloadButtons() {
+  // 检查是否在下载页面
+  if (window.location.href.includes('download.php')) {
+    // 使用MutationObserver监听DOM变化，确保动态加载的按钮也能被处理
+    const observer = new MutationObserver(function(mutations) {
+      handleDownloadButtons();
+    });
+    
+    // 开始观察整个document变化
+    observer.observe(document.documentElement, {
+      childList: true,
+      subtree: true
+    });
+    
+    // 立即处理当前页面上的下载按钮
+    setTimeout(handleDownloadButtons, 300);
+  }
+}
+
+// 处理下载按钮
+function handleDownloadButtons() {
+  // 查找所有下载按钮
+  const downloadForms = document.querySelectorAll('.download-form');
+  
+  downloadForms.forEach(form => {
+    // 防止重复处理
+    if (form.dataset.processed) return;
+    form.dataset.processed = 'true';
+    
+    // 获取下载URL
+    const formAction = form.getAttribute('action');
+    if (!formAction) return;
+    
+    // 创建一个可见的链接替代表单
+    const button = form.querySelector('button');
+    if (!button) return;
+    
+    const linkText = button.textContent || '下载';
+    const buttonClass = button.className;
+    
+    // 创建新的链接元素
+    const newLink = document.createElement('a');
+    newLink.href = formAction;
+    newLink.className = buttonClass;
+    newLink.innerHTML = button.innerHTML;
+    newLink.style.cssText = 'display:inline-flex;align-items:center;justify-content:center;text-decoration:none;';
+    
+    // 添加特殊属性以在PakePlus中触发系统浏览器
+    newLink.setAttribute('target', '_system');
+    newLink.setAttribute('rel', 'external');
+    
+    // 添加点击事件处理
+    newLink.addEventListener('click', function(e) {
+      e.preventDefault();
+      
+      // 检查是否在PakePlus环境中
+      const isPakePlus = /pakeplusclient/i.test(navigator.userAgent.toLowerCase());
+      
+      if (isPakePlus) {
+        // 尝试使用window.open打开外部浏览器
+        const opened = window.open(formAction, '_system');
+        
+        // 如果直接打开失败，显示提示
+        if (!opened) {
+          alert('请长按链接，选择在系统浏览器中打开，以完成下载');
+          
+          // 创建复制链接按钮
+          const copyBtn = document.createElement('button');
+          copyBtn.textContent = '复制下载链接';
+          copyBtn.style.cssText = 'display:block;margin:10px auto;padding:8px 15px;background:#f5f5f5;border:none;border-radius:4px;';
+          copyBtn.onclick = function() {
+            navigator.clipboard.writeText(formAction).then(() => {
+              alert('下载链接已复制，请在系统浏览器中粘贴访问');
+              copyBtn.textContent = '已复制';
+            });
+          };
+          
+          form.parentNode.insertBefore(copyBtn, form.nextSibling);
+        }
+      } else {
+        // 非PakePlus环境，直接跳转
+        window.location.href = formAction;
+      }
+    });
+    
+    // 替换原表单
+    form.parentNode.replaceChild(newLink, form);
+    
+    console.log('已修改下载按钮:', formAction);
+  });
+}
+
+// 处理安全区域（导航栏）问题
+function handleSafeAreaInsets() {
+  // 添加用于检测是否为移动设备的函数
+  function isMobileDevice() {
+    return /Android|webOS|iPhone|iPad|iPod|BlackBerry|IEMobile|Opera Mini/i.test(navigator.userAgent);
+  }
+  
+  // 检测是否为Android设备
+  function isAndroid() {
+    return /Android/i.test(navigator.userAgent);
+  }
+  
+  // 检查是否在PakePlus环境中
+  const isPakePlus = /pakeplusclient/i.test(navigator.userAgent.toLowerCase());
+  
+  // 如果是移动设备或PakePlus环境，应用安全区域padding
+  if (isMobileDevice() || isPakePlus) {
+    console.log('检测到移动设备，应用安全区域适配');
+    
+    // 创建样式元素
+    const safeAreaStyle = document.createElement('style');
+    
+    // 基础padding值（基于设备类型调整）
+    let bottomPadding = isAndroid() ? '50px' : '20px';
+    
+    // 使用CSS变量定义安全区域
+    safeAreaStyle.textContent = `
+      :root {
+        --safe-area-inset-bottom: ${bottomPadding};
+      }
+      
+      /* 应用到页面底部的元素 */
+      .footer, 
+      .page-footer,
+      .bottom-nav,
+      .fixed-bottom {
+        padding-bottom: calc(10px + var(--safe-area-inset-bottom)) !important;
+      }
+      
+      /* 固定在底部的浮动元素（如更新通知）需要添加margin */
+      .update-notification {
+        bottom: calc(20px + var(--safe-area-inset-bottom)) !important;
+      }
+      
+      /* 为内容添加底部padding，防止被导航栏遮挡 */
+      body {
+        padding-bottom: var(--safe-area-inset-bottom);
+      }
+      
+      /* 兼容iOS环境的安全区域 */
+      @supports (padding-bottom: env(safe-area-inset-bottom)) {
+        :root {
+          --safe-area-inset-bottom: env(safe-area-inset-bottom);
+        }
+        
+        body {
+          padding-bottom: env(safe-area-inset-bottom);
+        }
+      }
+    `;
+    
+    // 添加样式到页面头部
+    document.head.appendChild(safeAreaStyle);
+    
+    // 检测屏幕尺寸变化（如旋转）并重新应用安全区域
+    window.addEventListener('resize', function() {
+      // 更新安全区域值（如果需要）
+      console.log('屏幕尺寸变化，重新应用安全区域');
+    });
+    
+    console.log('已应用安全区域适配');
+  }
+}
+
 // 在页面加载完成时执行自定义功能
 if (document.readyState === 'loading') {
   document.addEventListener('DOMContentLoaded', initCustomFeatures);
 } else {
   // 如果页面已经加载完成，直接执行
   initCustomFeatures();
-}
+} 
 // css filter
 document.addEventListener('DOMContentLoaded', () => {
     const targetNode = document.body
